@@ -3,22 +3,23 @@ Cloudify MongoDB version 3.2
 
 ### MongoDb Blueprint
 
-This repo contains a blueprint that orchestrates a replicated and sharded [MongoDb](https://docs.mongodb.org/v2.6/) version 2.4.9 database cluster.  The blueprint is compatible with Cloudify version 3.3, targeted at [Openstack](http://docs.getcloudify.org/3.3.1/plugins/openstack/), and utilizes the [script plugin](http://docs.getcloudify.org/3.3.1/plugins/script/) to perform orchestration.
+This repo contains a blueprint that orchestrates a replicated and sharded [MongoDb](https://docs.mongodb.org/v3.2.3/) version 3.2.3 database cluster.
+The blueprint is compatible with Cloudify version 3.4, targeted at [Openstack](http://docs.getcloudify.org/3.3.1/plugins/openstack/),
+And utilizes the [script plugin](http://docs.getcloudify.org/3.3.1/plugins/script/) to perform orchestration.
 
 #### Blueprint Operation
 The blueprint takes three inputs:
 * `image`: The Openstack image ID.  It will be used for all nodes.  Note that any image used must support passwordless sudo.
 * `flavor`: The flavor id of the machine.
-* `agent_user`: The user used to log in remotely to the image instance.
+* `user`: The user used to log in remotely to the image instance.
+* `mongo_verion`: the MondoDB verion to install
 
-The following outputs are produced:
-* `cluster_info`, with the following key/values:
-  * `cfghosts`: the comma separated list of IP:Port identifiers of mongocfg node hosts.
-  * `dbhosts`: the comma separated list of IP:Port identifiers of mongod node hosts.
-
-`cfghosts` can be used to connect mongos instances not participating in the blueprint (perhaps from a non-Cloudify managed web tier).  Like all outputs, it is accessible via the REST API and CLI.
-
-The blueprint starts a pair of replication `mongod` nodes, three (for redundancy) `mongocfg` nodes, and a single `mongos` node.  The  `mondgod` nodes are started with the `--shardsvr` option.  The `joiner` node configures the `mongod` nodes into a replicaset, along with publishing the outputs.
+The blueprint starts a pair of replication `mongod` nodes,
+Three (for redundancy) `mongo_config` nodes,
+And a single `mongos` node.
+The `mondgod` nodes are started with the `--shardsvr` option.
+The `mongo_mgr` node configures the `mongod` nodes into a replicaset,
+And `mongo_mgr` node configures the `mongod` nodes a shard.
 
 #### Blueprint Details
 The blueprint, by virtue of the `types/mongotypes.yaml` file, defines 4 key node types and two relationship types that are used in the orchestration:

@@ -1,0 +1,94 @@
+node_types:
+  cloudify.nodes.MongoDB:
+    derived_from: cloudify.nodes.DBMS
+    properties:
+      port:
+        description: MongoDB port
+        type: integer
+        default: 27017
+      install:
+        description: install or just connect to existing
+        type: boolean
+        default: true
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          implementation: scripts/install_mongodb.sh
+          inputs:
+            mongo_version:
+              type: string
+              default: 3.2.3
+            install_mode:
+              type: boolean
+              description: true = install, false = uninstall
+              default: true
+        delete:
+          implementation: scripts/install_mongodb.sh
+          inputs:
+            mongo_version:
+              type: string
+              default: 3.2.3
+            install_mode:
+              type: boolean
+              description: true = install, false = uninstall
+              default: false
+  cloudify.nodes.Mongod:
+    derived_from: cloudify.nodes.MongoDB
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: scripts/start_mongodb_primery_daemon.py
+        stop: scripts/stop_mongodb_primery_daemon.py
+  cloudify.nodes.Mongos:
+    derived_from: cloudify.nodes.MongoDB
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: scripts/start_mongodb_shard_daemon.py
+        stop: scripts/stop_mongodb_shard_daemon.py
+  cloudify.nodes.MongoConfig:
+    derived_from: cloudify.nodes.MongoDB
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: scripts/start_mongodb_configuration_daemon.py
+        stop: scripts/stop_mongodb_configuration_daemon.py
+  cloudify.nodes.MongoMGR:
+    derived_from: cloudify.nodes.MongoDB
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        start: scripts/mgr_tasks.py
+
+
+relationships:
+  mongos_depends_on_mongo_config:
+    derived_from: cloudify.relationships.depends_on
+    source_interfaces:
+      cloudify.interfaces.relationship_lifecycle:
+        preconfigure:
+          implementation: scripts/pre_config_shard.py
+        unlink:
+          implementation: scripts/unlink_shard.py
+  mongo_mgr_connect_mondo_config:
+    derived_from: cloudify.relationships.depends_on
+    source_interfaces:
+      cloudify.interfaces.relationship_lifecycle:
+        preconfigure:
+          implementation: scripts/get_mongo_config_server_address.py
+        unlink:
+          implementation: scripts/unlink_mongo_config_server_address.py
+  mongo_mgr_connect_mondos:
+    derived_from: cloudify.relationships.depends_on
+    source_interfaces:
+      cloudify.interfaces.relationship_lifecycle:
+        preconfigure:
+          implementation: scripts/get_mongos_server_address.py
+        unlink:
+          implementation: scripts/unlink_mongos_server_address.py
+  mongo_mgr_connect_mondod:
+    derived_from: cloudify.relationships.depends_on
+    source_interfaces:
+      cloudify.interfaces.relationship_lifecycle:
+        preconfigure:
+          implementation: scripts/pre_config_mgr_database_nodes.py
+        establish:
+          implementation: scripts/connect_mongod_workflow_handlers.py
+        unlink:
+          implementation: scripts/unlink_config_mgr_database_nodes.py

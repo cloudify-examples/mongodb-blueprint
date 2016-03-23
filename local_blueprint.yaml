@@ -10,7 +10,6 @@ imports:
 inputs:
   server_ip:
     description: The ip of the server the application will be deployed on.
-    default: 192.168.10.238
   mongo_verion:
     description: MongoDB version to install
     default: 3.2.3

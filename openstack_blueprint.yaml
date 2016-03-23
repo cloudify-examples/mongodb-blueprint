@@ -14,6 +14,8 @@ inputs:
     description: Image to be used when launching agent VM's
   flavor:
     description: Flavor of the agent VM's
+  user:
+    description: VM's user
   mongo_verion:
     description: MongoDB version to install
     default: 3.2.3
@@ -34,7 +36,7 @@ dsl_definitions:
     image: { get_input: image }
     flavor: { get_input: flavor }
     agent_config:
-      user: ubuntu
+      user: { get_input: user }
 
 node_templates:
   mongod_host_security_group:

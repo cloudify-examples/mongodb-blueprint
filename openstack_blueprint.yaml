@@ -1,0 +1,131 @@
+tosca_definitions_version: cloudify_dsl_1_2
+
+description: >
+  The blueprint describes an shared mongoDB cluster in OpenStack.
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/3.3.1/types.yaml
+  - http://www.getcloudify.org/spec/diamond-plugin/1.3.1/plugin.yaml
+  - http://www.getcloudify.org/spec/openstack-plugin/1.3.1/plugin.yaml
+  - types/mongodbtypes.yaml
+
+inputs:
+  image:
+    description: Image to be used when launching agent VM's
+  flavor:
+    description: Flavor of the agent VM's
+  user:
+    description: VM's user
+  mongo_verion:
+    description: MongoDB version to install
+    default: 3.2.3
+  mongod_port:
+    description: Mongod process port
+    default: 27017
+  mongos_port:
+    description: Mongos process port
+    default: 27018
+  mongo_config_port:
+    description: Mongo config MGR process port
+    default: 27019
+
+
+dsl_definitions:
+
+  - &compute_properties
+    image: { get_input: image }
+    flavor: { get_input: flavor }
+    agent_config:
+      user: { get_input: user }
+
+node_templates:
+  mongod_host_security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
+    properties:
+      security_group:
+        name: mongod_host_security_group
+        description: mongo database node security group
+      rules:
+        - remote_ip_prefix: 0.0.0.0/0
+          port: { get_property: [mongod, port] }
+  mongod_host:
+    type: cloudify.openstack.nodes.Server
+    properties: *compute_properties
+    relationships:
+      - target: mongod_host_security_group
+        type: cloudify.openstack.server_connected_to_security_group
+  mongod:
+    type: cloudify.nodes.Mongod
+    properties:
+      port: { get_input: mongod_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongod_host
+
+  mongos_host_security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
+    properties:
+      security_group:
+        name: mongos_host_security_group
+        description: mongo shard node security group
+      rules:
+        - remote_ip_prefix: 0.0.0.0/0
+          port: { get_property: [mongos, port] }
+  mongos_host:
+    type: cloudify.openstack.nodes.Server
+    properties: *compute_properties
+    relationships:
+      - target: mongos_host_security_group
+        type: cloudify.openstack.server_connected_to_security_group
+  mongos:
+    type: cloudify.nodes.Mongos
+    properties:
+      port: { get_input: mongos_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongos_host
+      - type: mongos_depends_on_mongo_config
+        target: mongo_config
+
+  mongo_config_host_security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
+    properties:
+      security_group:
+        name: mongo_config_host_security_group
+        description: mongo config node security group
+      rules:
+        - remote_ip_prefix: 0.0.0.0/0
+          port: { get_property: [mongo_config, port] }
+  mongo_config_host:
+    type: cloudify.openstack.nodes.Server
+    properties: *compute_properties
+    relationships:
+      - target: mongo_config_host_security_group
+        type: cloudify.openstack.server_connected_to_security_group
+  mongo_config:
+    type: cloudify.nodes.MongoConfig
+    properties:
+      port: { get_input: mongo_config_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongo_config_host
+
+  mongo_mgr:
+    type: cloudify.nodes.MongoMGR
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongos_host
+      - type: mongo_mgr_connect_mondod
+        target: mongod
+      - type: mongo_mgr_connect_mondo_config
+        target: mongo_config
+      - type: mongo_mgr_connect_mondos
+        target: mongos
+
+#output:
+#  mongo_clouster_info:
+#    description: Mongo Clouster Info
+#    value:
+#      config_servers: { get_attribute: [] }
+#      shard_servers: { get_attribute: [] }
+#      primery_servers: { get_attribute: [] }

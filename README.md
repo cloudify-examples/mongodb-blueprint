@@ -1,3 +1,5 @@
+[![Build Status](https://circleci.com/gh/cloudify-examples/cloudify-mongodbV3.2-blueprint.svg?style=shield&circle-token=:circle-token)](https://circleci.com/gh/cloudify-examples/cloudify-mongodbV3.2-blueprint)
+
 # cloudify-mongodbV3.2-blueprint
 Cloudify MongoDB version 3.2 and above
 

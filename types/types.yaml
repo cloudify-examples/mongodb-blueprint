@@ -2,7 +2,7 @@
 # The types defined here make use of features only available in the
 # 'cloudify_dsl_1_2' tosca definitions version
 ##################################################################################
-tosca_definitions_version: cloudify_dsl_1_2
+tosca_definitions_version: cloudify_dsl_1_3
 
 ##################################################################################
 # Base type definitions
@@ -47,7 +47,7 @@ node_types:
       # DEPRECATED
       install_agent:
         default: ''
-      cloudify_agent:
+      agent_config:
         default: {}
 
     interfaces:
@@ -301,7 +301,7 @@ node_types:
             enabled: true
             global_parallel_executions_limit: 50  # -1 means no limit
           resources_prefix: ''
-          cloudify_agent:
+          agent_config:
             min_workers: 2
             max_workers: 5
             remote_execution_port: 22

@@ -1,0 +1,240 @@
+tosca_definitions_version: cloudify_dsl_1_3
+
+imports:
+  - http://www.getcloudify.org/spec/cloudify/4.0/types.yaml
+  - http://getcloudify.org.s3.amazonaws.com/spec/aws-plugin/1.4.4/plugin.yaml
+  - http://www.getcloudify.org/spec/diamond-plugin/1.3.5/plugin.yaml
+  - types/mongodbtypes.yaml
+  - imports/mongodbV3.2-blueprint.yaml
+
+inputs:
+
+  key_name:
+    default: mongodbV3.2-blueprint-key
+
+  private_key_path:
+    default: ~/.ssh/mongodbV3.2-blueprint-key.pem
+
+  vpc_id:
+    type: string
+
+  vpc_cidr_block:
+    type: string
+
+  subnet_id:
+    type: string
+
+  subnet_cidr:
+    type: string
+
+  ec2_region_name:
+    default: us-east-1
+
+  ec2_region_endpoint:
+    default: ec2.us-east-1.amazonaws.com
+
+  availability_zone:
+    default: us-east-1e
+
+  ami:
+    description: >
+      Amazon Ubuntu 14.04 AMI
+
+  instance_type:
+    description: >
+      Agent VM Instance Type
+
+  agent_user:
+    default: ubuntu
+
+dsl_definitions:
+
+    aws_config: &aws_config
+      aws_access_key_id: { get_secret: aws_access_key_id }
+      aws_secret_access_key: { get_secret: aws_secret_access_key }
+      ec2_region_name: { get_input: ec2_region_name }
+      ec2_region_endpoint: { get_input: ec2_region_endpoint }
+
+node_templates:
+
+  # Compute Nodes
+
+  mongod_host:
+    type: cloudify.aws.nodes.Instance
+    properties:
+      agent_config:
+        install_method: remote
+        port: 22
+        user: { get_input: agent_user }
+        key: { get_property: [ key, private_key_path ] }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+      parameters:
+        placement: { get_property: [ subnet, availability_zone ] }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_keypair
+        target: key
+      - type: cloudify.aws.relationships.instance_connected_to_subnet
+        target: subnet
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: ssh_group
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: mongod_host_security_group
+      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+        target: mongod_ip
+
+  mongos_host:
+    type: cloudify.aws.nodes.Instance
+    properties:
+      agent_config:
+        install_method: remote
+        port: 22
+        user: { get_input: agent_user }
+        key: { get_property: [ key, private_key_path ] }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+      parameters:
+        placement: { get_property: [ subnet, availability_zone ] }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_keypair
+        target: key
+      - type: cloudify.aws.relationships.instance_connected_to_subnet
+        target: subnet
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: ssh_group
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: mongos_host_security_group
+      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+        target: mongos_ip
+
+  mongo_config_host:
+    type: cloudify.aws.nodes.Instance
+    properties:
+      agent_config:
+        install_method: remote
+        port: 22
+        user: { get_input: agent_user }
+        key: { get_property: [ key, private_key_path ] }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+      parameters:
+        placement: { get_property: [ subnet, availability_zone ] }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_keypair
+        target: key
+      - type: cloudify.aws.relationships.instance_connected_to_subnet
+        target: subnet
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: ssh_group
+      - type: cloudify.aws.relationships.instance_connected_to_security_group
+        target: mongo_config_host_security_group
+      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
+        target: mongo_config_ip
+
+  # Security Groups
+
+  ssh_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      aws_config: *aws_config
+      description: Puppet Group
+      rules:
+        - ip_protocol: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: { get_input: vpc_cidr_block }
+    relationships:
+      - type: cloudify.aws.relationships.security_group_contained_in_vpc
+        target: vpc
+
+  mongod_host_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      aws_config: *aws_config
+      description: Mongo Database Group
+      rules:
+        - ip_protocol: tcp
+          from_port: { get_property: [mongod, port] }
+          to_port: { get_property: [mongod, port] }
+          cidr_ip: { get_input: vpc_cidr_block }
+    relationships:
+      - type: cloudify.aws.relationships.security_group_contained_in_vpc
+        target: vpc
+
+  mongos_host_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      aws_config: *aws_config
+      description: Mongo Shard Group
+      rules:
+        - ip_protocol: tcp
+          from_port: { get_property: [mongos, port] }
+          to_port: { get_property: [mongos, port] }
+          cidr_ip: { get_input: vpc_cidr_block }
+    relationships:
+      - type: cloudify.aws.relationships.security_group_contained_in_vpc
+        target: vpc
+
+  mongo_config_host_security_group:
+    type: cloudify.aws.nodes.SecurityGroup
+    properties:
+      aws_config: *aws_config
+      description: Puppet Group
+      rules:
+        - ip_protocol: tcp
+          from_port: { get_property: [mongo_config, port] }
+          to_port: { get_property: [mongo_config, port] }
+          cidr_ip: { get_input: vpc_cidr_block }
+    relationships:
+      - type: cloudify.aws.relationships.security_group_contained_in_vpc
+        target: vpc
+
+  subnet:
+    type: cloudify.aws.nodes.Subnet
+    properties:
+      aws_config: *aws_config
+      use_external_resource: true
+      resource_id: { get_input: subnet_id }
+      cidr_block: { get_input: subnet_cidr }
+      availability_zone: { get_input: availability_zone }
+    relationships:
+      - type: cloudify.aws.relationships.subnet_contained_in_vpc
+        target: vpc
+
+  vpc:
+    type: cloudify.aws.nodes.VPC
+    properties:
+      aws_config: *aws_config
+      use_external_resource: true
+      resource_id: { get_input: vpc_id }
+      cidr_block: { get_input: vpc_cidr_block }
+
+  key:
+    type: cloudify.aws.nodes.KeyPair
+    properties:
+      aws_config: *aws_config
+      resource_id: { get_input: key_name }
+      private_key_path: { get_input: private_key_path }
+
+  # Floating IPs
+
+  mongod_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *aws_config
+      domain: vpc
+
+  mongos_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *aws_config
+      domain: vpc
+
+  mongo_config_ip:
+    type: cloudify.aws.nodes.ElasticIP
+    properties:
+      aws_config: *aws_config
+      domain: vpc

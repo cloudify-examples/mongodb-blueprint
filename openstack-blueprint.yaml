@@ -20,7 +20,7 @@ inputs:
   user:
     description: VM's user
 
-  mongo_verion:
+  mongo_version:
     description: MongoDB version to install
     default: 3.2.3
 
@@ -88,6 +88,7 @@ dsl_definitions:
       install_method: remote
 
 node_templates:
+
   mongod_host_security_group:
     type: cloudify.openstack.nodes.SecurityGroup
     properties:

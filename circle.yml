@@ -24,6 +24,7 @@ test:
     - cfy init
     - cfy blueprints validate local-blueprint.yaml
     - cfy blueprints validate openstack-blueprint.yaml
+    - cfy blueprints validate aws-blueprint.yaml
 
 deployment:
   release:

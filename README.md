@@ -8,6 +8,7 @@ Cloudify MongoDB version 3.2 and above
 This repo contains a blueprint that orchestrates a replicated and sharded [MongoDb](https://docs.mongodb.org/v3.2.3/) version 3.2.3 database cluster.
 The blueprint is compatible with Cloudify version 3.4, targeted at [Openstack](http://docs.getcloudify.org/3.3.1/plugins/openstack/),
 And utilizes the [script plugin](http://docs.getcloudify.org/3.3.1/plugins/script/) to perform orchestration.
+Also compatible with Cloudify 4.0.
 
 #### Blueprint Operation
 The blueprint takes three inputs:

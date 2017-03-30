@@ -4,10 +4,11 @@ description: >
   The blueprint describes an shared mongoDB cluster in OpenStack.
 
 imports:
-  - http://www.getcloudify.org/spec/cloudify/3.4/types.yaml
+  - http://www.getcloudify.org/spec/cloudify/4.0/types.yaml
   - http://www.getcloudify.org/spec/diamond-plugin/1.3.5/plugin.yaml
-  - http://www.getcloudify.org/spec/openstack-plugin/2.0/plugin.yaml
+  - http://www.getcloudify.org/spec/openstack-plugin/2.0.1/plugin.yaml
   - types/mongodbtypes.yaml
+  - imports/mongodbV3.2-blueprint.yaml
 
 inputs:
 
@@ -17,81 +18,61 @@ inputs:
   flavor:
     description: Flavor of the agent VM's
 
-  user:
-    description: VM's user
+  agent_user:
+    default: ubuntu
 
-  mongo_verion:
-    description: MongoDB version to install
-    default: 3.2.3
-
-  mongod_port:
-    description: Mongod process port
-    default: 27017
-
-  mongos_port:
-    description: Mongos process port
-    default: 27018
-
-  mongo_config_port:
-    description: Mongo config MGR process port
-    default: 27019
-
-  management_network_name:
-    description: >
-      management_network_name
-
-  agent_key_name:
+  key_name:
     description: >
       the agent public key name (created during manager bootstrap)
     type: string
+    default: mongodb-openstack-key
 
-  agent_keypair_file:
+  private_key_path:
     type: string
-    default: ''
+    default: ~/.ssh/mongodb-openstack-key.pem
 
-  keystone_username:
-    description: YOUR KEYSTONE USERNAME
+  external_network_name:
+    default: external
 
-  keystone_password:
-    description: YOUR KEYSTONE PASSWORD
+  router_name:
+    description: The Router Name
 
-  keystone_tenant_name:
-    description: ''
+  public_network_name:
+    description: The name of the Openstack public network.
 
-  keystone_url:
-    description: ''
+  public_subnet_name:
+    description: The name of the public network subnet.
 
   region:
     default: ''
 
-  openstack_configuration:
-    default:
-      username: { get_input: keystone_username }
-      password: { get_input: keystone_password }
-      tenant_name: { get_input: keystone_tenant_name }
-      auth_url: { get_input: keystone_url }
-      region: { get_input: region }
-
-
 dsl_definitions:
 
-  - &compute_properties
-    openstack_config: { get_input: openstack_configuration }
+  openstack_config: &openstack_config
+    username: { get_secret: keystone_username }
+    password: { get_secret: keystone_password }
+    tenant_name: { get_secret: keystone_tenant_name }
+    auth_url: { get_secret: keystone_url }
+    region: { get_input: region }
+
+  compute_properties: &compute_properties
+    openstack_config: *openstack_config
     server:
-      key_name: { get_input: agent_key_name }
       image: { get_input: image }
       flavor: { get_input: flavor }
-    management_network_name: { get_input: management_network_name }
+    management_network_name: { get_property: [ public_network, resource_id ] }
     agent_config:
-      user: { get_input: user }
-      key: { get_input: agent_keypair_file }
+      user: { get_input: agent_user }
+      key: { get_property: [ key, private_key_path ] }
       install_method: remote
+      port: 22
 
 node_templates:
+
   mongod_host_security_group:
     type: cloudify.openstack.nodes.SecurityGroup
     properties:
-      openstack_config: { get_input: openstack_configuration }
+      openstack_config: *openstack_config
       security_group:
         name: mongod_host_security_group
         description: mongo database node security group
@@ -103,21 +84,49 @@ node_templates:
     type: cloudify.openstack.nodes.Server
     properties: *compute_properties
     relationships:
-      - target: mongod_host_security_group
-        type: cloudify.openstack.server_connected_to_security_group
+      - target: key
+        type: cloudify.openstack.server_connected_to_keypair
+      - target: mongodb_host_port
+        type: cloudify.openstack.server_connected_to_port
 
-  mongod:
-    type: cloudify.nodes.Mongod
+  ssh_security_group:
+    type: cloudify.openstack.nodes.SecurityGroup
     properties:
-      port: { get_input: mongod_port }
+      openstack_config: *openstack_config
+      security_group:
+        name: ssh_security_group
+        description: SSH Group
+      rules:
+        - port: 22
+          remote_ip_prefix: 0.0.0.0/0
+
+  mongodb_host_port:
+    type: cloudify.openstack.nodes.Port
+    properties:
+      openstack_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
-        target: mongod_host
+        target: public_network
+      - type: cloudify.relationships.depends_on
+        target: public_subnet
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: mongod_host_security_group
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: ssh_security_group
+      - type: cloudify.openstack.port_connected_to_floating_ip
+        target: mongod_ip
+
+  mongod_ip:
+    type: cloudify.openstack.nodes.FloatingIP
+    properties:
+      openstack_config: *openstack_config
+      floatingip:
+        floating_network_name: { get_property: [ external_network, resource_id ] }
 
   mongos_host_security_group:
     type: cloudify.openstack.nodes.SecurityGroup
     properties:
-      openstack_config: { get_input: openstack_configuration }
+      openstack_config: *openstack_config
       security_group:
         name: mongos_host_security_group
         description: mongo shard node security group
@@ -129,23 +138,38 @@ node_templates:
     type: cloudify.openstack.nodes.Server
     properties: *compute_properties
     relationships:
-      - target: mongos_host_security_group
-        type: cloudify.openstack.server_connected_to_security_group
+      - target: key
+        type: cloudify.openstack.server_connected_to_keypair
+      - target: mongos_host_port
+        type: cloudify.openstack.server_connected_to_port
 
-  mongos:
-    type: cloudify.nodes.Mongos
+  mongos_host_port:
+    type: cloudify.openstack.nodes.Port
     properties:
-      port: { get_input: mongos_port }
+      openstack_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
-        target: mongos_host
-      - type: mongos_depends_on_mongo_config
-        target: mongo_config
+        target: public_network
+      - type: cloudify.relationships.depends_on
+        target: public_subnet
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: mongos_host_security_group
+      - type: cloudify.openstack.port_connected_to_floating_ip
+        target: mongos_ip
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: ssh_security_group
+
+  mongos_ip:
+    type: cloudify.openstack.nodes.FloatingIP
+    properties:
+      openstack_config: *openstack_config
+      floatingip:
+        floating_network_name: { get_property: [ external_network, resource_id ] }
 
   mongo_config_host_security_group:
     type: cloudify.openstack.nodes.SecurityGroup
     properties:
-      openstack_config: { get_input: openstack_configuration }
+      openstack_config: *openstack_config
       security_group:
         name: mongo_config_host_security_group
         description: mongo config node security group
@@ -157,33 +181,73 @@ node_templates:
     type: cloudify.openstack.nodes.Server
     properties: *compute_properties
     relationships:
-      - target: mongo_config_host_security_group
-        type: cloudify.openstack.server_connected_to_security_group
+      - target: key
+        type: cloudify.openstack.server_connected_to_keypair
+      - target: mongo_config_host_port
+        type: cloudify.openstack.server_connected_to_port
 
-  mongo_config:
-    type: cloudify.nodes.MongoConfig
+  mongo_config_host_port:
+    type: cloudify.openstack.nodes.Port
     properties:
-      port: { get_input: mongo_config_port }
+      openstack_config: *openstack_config
     relationships:
       - type: cloudify.relationships.contained_in
-        target: mongo_config_host
+        target: public_network
+      - type: cloudify.relationships.depends_on
+        target: public_subnet
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: mongo_config_host_security_group
+      - type: cloudify.openstack.port_connected_to_floating_ip
+        target: mongo_config_ip
+      - type: cloudify.openstack.port_connected_to_security_group
+        target: ssh_security_group
 
-  mongo_mgr:
-    type: cloudify.nodes.MongoMGR
+  mongo_config_ip:
+    type: cloudify.openstack.nodes.FloatingIP
+    properties:
+      openstack_config: *openstack_config
+      floatingip:
+        floating_network_name: { get_property: [ external_network, resource_id ] }
+
+  public_subnet:
+    type: cloudify.openstack.nodes.Subnet
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_input: public_subnet_name }
     relationships:
-      - type: cloudify.relationships.contained_in
-        target: mongos_host
-      - type: mongo_mgr_connect_mondod
-        target: mongod
-      - type: mongo_mgr_connect_mondo_config
-        target: mongo_config
-      - type: mongo_mgr_connect_mondos
-        target: mongos
+      - target: public_network
+        type: cloudify.relationships.contained_in
+      - target: router
+        type: cloudify.openstack.subnet_connected_to_router
 
-#output:
-#  mongo_clouster_info:
-#    description: Mongo Clouster Info
-#    value:
-#      config_servers: { get_attribute: [] }
-#      shard_servers: { get_attribute: [] }
-#      primery_servers: { get_attribute: [] }
+  public_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_input: public_network_name }
+
+  router:
+    type: cloudify.openstack.nodes.Router
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_input: router_name }
+    relationships:
+      - target: external_network
+        type: cloudify.relationships.connected_to
+
+  external_network:
+    type: cloudify.openstack.nodes.Network
+    properties:
+      openstack_config: *openstack_config
+      use_external_resource: true
+      resource_id: { get_input: external_network_name }
+
+  key:
+    type: cloudify.openstack.nodes.KeyPair
+    properties:
+      openstack_config: *openstack_config
+      resource_id: { get_input: key_name }
+      private_key_path: { get_input: private_key_path }

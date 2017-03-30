@@ -1,0 +1,57 @@
+inputs:
+
+  mongo_version:
+    description: MongoDB version to install
+    default: 3.2.3
+
+  mongod_port:
+    description: Mongod process port
+    default: 27017
+
+  mongos_port:
+    description: Mongos process port
+    default: 27018
+
+  mongo_config_port:
+    description: Mongo config MGR process port
+    default: 27019
+
+node_templates:
+
+  mongod:
+    type: cloudify.nodes.Mongod
+    properties:
+      port: { get_input: mongod_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongod_host
+
+  mongos:
+    type: cloudify.nodes.Mongos
+    properties:
+      port: { get_input: mongos_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongos_host
+      - type: mongos_depends_on_mongo_config
+        target: mongo_config
+
+  mongo_config:
+    type: cloudify.nodes.MongoConfig
+    properties:
+      port: { get_input: mongo_config_port }
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongo_config_host
+
+  mongo_mgr:
+    type: cloudify.nodes.MongoMGR
+    relationships:
+      - type: cloudify.relationships.contained_in
+        target: mongos_host
+      - type: mongo_mgr_connect_mondod
+        target: mongod
+      - type: mongo_mgr_connect_mondo_config
+        target: mongo_config
+      - type: mongo_mgr_connect_mondos
+        target: mongos

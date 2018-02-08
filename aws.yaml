@@ -1,10 +1,12 @@
 tosca_definitions_version: cloudify_dsl_1_3
 
+description: >
+  This Blueprint installs MongoDB v3.2 Cluster on an AWS.
+
 imports:
   - http://www.getcloudify.org/spec/cloudify/4.2/types.yaml
-  - http://www.getcloudify.org/spec/utilities-plugin/1.4.2.1/plugin.yaml
-  - http://www.getcloudify.org/spec/diamond-plugin/1.3.5/plugin.yaml
-  - http://www.getcloudify.org/spec/awssdk-plugin/1.2.0.1/plugin.yaml
+  - http://www.getcloudify.org/spec/utilities-plugin/1.4.5/plugin.yaml
+  - http://www.getcloudify.org/spec/awssdk-plugin/1.2.0.3/plugin.yaml
   - https://github.com/cloudify-cosmo/cloudify-aws-plugin/releases/download/1.5.1.2/plugin.yaml
   - types/mongodbtypes.yaml
   - imports/mongodbV3.2-blueprint.yaml
@@ -13,41 +15,18 @@ inputs:
 
   ami:
     description: >
-      An AWS AMI. Tested with a Ubuntu 14.04 image.
-    default: { get_secret: ubuntu_trusty_image }
+      An AWS AMI. Tested with a Ubuntu Trusty image.
+    default: { get_attribute: [ ubuntu_trusty_ami, aws_resource_id ] }
 
   instance_type:
     description: >
       The AWS instance_type. Tested with m3.medium, although that is unnecessarily large.
-    default: t2.micro
+    default: t2.medium
 
   agent_user:
     description: >
       The username of the agent running on the instance created from the image.
     default: ubuntu
-
-
-  vpc_id:
-    description: >
-      The ID of the VPC that the VM should be connected to.
-    default: { get_secret: vpc_id }
-
-  public_subnet_id:
-    description: >
-      The ID of the public subnet in vpc_id.
-      This subnet should allow elastic IPs and it should also have either a NAT gateway or NAT instance.
-    default: { get_secret: public_subnet_id }
-
-  private_subnet_id:
-    description: >
-      The ID of the private subnet in vpc_id.
-      This subnet should have internet routing to a NAT on another subnet.
-    default: { get_secret: private_subnet_id }
-
-  availability_zone:
-    description: >
-      The availability zone where to create the VM, should be in the same availability zone as public_subnet_id.
-    default: { get_secret: availability_zone }
 
   agent_key_private:
     description: >
@@ -59,216 +38,356 @@ inputs:
       The content of the agent's public key.
     default: { get_secret: agent_key_public }
 
+  manager_network:
+    default: external
+
+  network_deployment_name:
+    default: aws-example-network
+
 dsl_definitions:
 
-    aws_config: &aws_config
-      aws_access_key_id: { get_secret: aws_access_key_id }
-      aws_secret_access_key: { get_secret: aws_secret_access_key }
-      ec2_region_name: { get_secret: ec2_region_name }
-      ec2_region_endpoint: { get_secret: ec2_region_endpoint }
+  aws_config: &aws_config
+    aws_access_key_id: { get_secret: aws_access_key_id }
+    aws_secret_access_key: { get_secret: aws_secret_access_key }
+    ec2_region_name: { get_attribute: [ aws, deployment, outputs, ec2_region_name ] }
+    ec2_region_endpoint: { get_attribute: [ aws, deployment, outputs, ec2_region_endpoint ] }
+
+  client_config: &client_config
+    aws_access_key_id: { get_secret: aws_access_key_id }
+    aws_secret_access_key: { get_secret: aws_secret_access_key }
+    region_name: { get_attribute: [ aws, deployment, outputs, ec2_region_name ] }
 
 node_templates:
 
   mongod_host:
     type: cloudify.aws.nodes.Instance
     properties:
-      aws_config: *aws_config
-      image_id: { get_input: ami }
-      instance_type: { get_input: instance_type }
       agent_config:
-        install_method: remote
+        network: { get_input: manager_network }
+        install_method: init_script
         user: { get_input: agent_user }
         port: 22
         key: { get_input: agent_key_private }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_eni
+        target: mongod_nic
+      - type: cloudify.relationships.depends_on
+        target: mongod_ip
+      - type: cloudify.relationships.depends_on
+        target: cloudify_host_cloud_config
+      - type: cloudify.relationships.depends_on
+        target: ubuntu_trusty_ami
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
           implementation: aws.cloudify_aws.ec2.instance.create
           inputs:
             args:
-              block_device_map:
-                '/dev/sda1':
-                  delete_on_termination: true
-              placement: { get_input: availability_zone }
+              image_id: { get_input: ami }
+              placement: { get_attribute: [ aws, deployment, outputs, availability_zone ] }
               user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
-    relationships:
-      - type: cloudify.aws.relationships.instance_connected_to_subnet
-        target: subnet
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: ssh_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: mongod_host_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
-        target: mongod_ip
 
   mongos_host:
     type: cloudify.aws.nodes.Instance
     properties:
-      aws_config: *aws_config
-      image_id: { get_input: ami }
-      instance_type: { get_input: instance_type }
       agent_config:
-        install_method: remote
+        network: { get_input: manager_network }
+        install_method: init_script
         user: { get_input: agent_user }
         port: 22
         key: { get_input: agent_key_private }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_eni
+        target: mongos_nic
+      - type: cloudify.relationships.depends_on
+        target: mongos_ip
+      - type: cloudify.relationships.depends_on
+        target: cloudify_host_cloud_config
+      - type: cloudify.relationships.depends_on
+        target: ubuntu_trusty_ami
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
           implementation: aws.cloudify_aws.ec2.instance.create
           inputs:
             args:
-              block_device_map:
-                '/dev/sda1':
-                  delete_on_termination: true
-              placement: { get_input: availability_zone }
+              image_id: { get_input: ami }
+              placement: { get_attribute: [ aws, deployment, outputs, availability_zone ] }
               user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
-    relationships:
-      - type: cloudify.aws.relationships.instance_connected_to_subnet
-        target: subnet
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: ssh_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: mongos_host_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
-        target: mongos_ip
 
   mongo_config_host:
     type: cloudify.aws.nodes.Instance
     properties:
-      aws_config: *aws_config
-      image_id: { get_input: ami }
-      instance_type: { get_input: instance_type }
       agent_config:
-        install_method: remote
+        network: { get_input: manager_network }
+        install_method: init_script
         user: { get_input: agent_user }
         port: 22
         key: { get_input: agent_key_private }
+      aws_config: *aws_config
+      image_id: { get_input: ami }
+      instance_type: { get_input: instance_type }
+    relationships:
+      - type: cloudify.aws.relationships.instance_connected_to_eni
+        target: mongo_nic
+      - type: cloudify.relationships.depends_on
+        target: mongo_ip
+      - type: cloudify.relationships.depends_on
+        target: cloudify_host_cloud_config
+      - type: cloudify.relationships.depends_on
+        target: ubuntu_trusty_ami
     interfaces:
       cloudify.interfaces.lifecycle:
         create:
           implementation: aws.cloudify_aws.ec2.instance.create
           inputs:
             args:
-              block_device_map:
-                '/dev/sda1':
-                  delete_on_termination: true
-              placement: { get_input: availability_zone }
+              image_id: { get_input: ami }
+              placement: { get_attribute: [ aws, deployment, outputs, availability_zone ] }
               user_data: { get_attribute: [ cloudify_host_cloud_config, cloud_config ] }
-    relationships:
-      - type: cloudify.aws.relationships.instance_connected_to_subnet
-        target: subnet
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: ssh_group
-      - type: cloudify.aws.relationships.instance_connected_to_security_group
-        target: mongo_config_host_security_group
-      - type: cloudify.aws.relationships.instance_connected_to_elastic_ip
-        target: mongo_config_ip
 
-  ssh_group:
-    type: cloudify.aws.nodes.SecurityGroup
+  ubuntu_trusty_ami:
+    type: cloudify.nodes.aws.ec2.Image
     properties:
-      aws_config: *aws_config
-      description: Puppet Group
-      rules:
-        - ip_protocol: tcp
-          from_port: 22
-          to_port: 22
-          cidr_ip: 0.0.0.0/0
+      resource_config:
+        kwargs:
+          Filters:
+          - Name: name
+            Values:
+            - 'ubuntu/images/hvm-ssd/ubuntu-trusty-14.04-amd64-server-20170727'
+          - Name: owner-id
+            Values:
+            - '099720109477'
+      client_config: *client_config
     relationships:
-      - type: cloudify.aws.relationships.security_group_contained_in_vpc
-        target: vpc
-
-  mongod_host_security_group:
-    type: cloudify.aws.nodes.SecurityGroup
-    properties:
-      aws_config: *aws_config
-      description: Mongo Database Group
-      rules:
-        - ip_protocol: tcp
-          from_port: { get_property: [mongod, port] }
-          to_port: { get_property: [mongod, port] }
-          cidr_ip: 0.0.0.0/0
-    relationships:
-      - type: cloudify.aws.relationships.security_group_contained_in_vpc
-        target: vpc
-
-  mongos_host_security_group:
-    type: cloudify.aws.nodes.SecurityGroup
-    properties:
-      aws_config: *aws_config
-      description: Mongo Shard Group
-      rules:
-        - ip_protocol: tcp
-          from_port: { get_property: [mongos, port] }
-          to_port: { get_property: [mongos, port] }
-          cidr_ip: 0.0.0.0/0
-    relationships:
-      - type: cloudify.aws.relationships.security_group_contained_in_vpc
-        target: vpc
-
-  mongo_config_host_security_group:
-    type: cloudify.aws.nodes.SecurityGroup
-    properties:
-      aws_config: *aws_config
-      description: Puppet Group
-      rules:
-        - ip_protocol: tcp
-          from_port: { get_property: [mongo_config, port] }
-          to_port: { get_property: [mongo_config, port] }
-          cidr_ip: 0.0.0.0/0
-    relationships:
-      - type: cloudify.aws.relationships.security_group_contained_in_vpc
-        target: vpc
+    - type: cloudify.relationships.contained_in
+      target: aws
 
   mongod_ip:
-    type: cloudify.aws.nodes.ElasticIP
+    type: cloudify.nodes.aws.ec2.ElasticIP
     properties:
-      aws_config: *aws_config
-      domain: vpc
+      resource_config:
+        kwargs:
+          Domain: 'vpc'
+      client_config: *client_config
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: mongod_nic
+    - type: cloudify.relationships.contained_in
+      target: aws
+
+  mongod_nic:
+    type: cloudify.nodes.aws.ec2.Interface
+    properties:
+      client_config: *client_config
+      resource_config:
+        kwargs:
+          Description: Created by mongodb-blueprint aws.yaml.
+          SubnetId: { get_attribute: [ public_subnet, aws_resource_id] }
+          Groups:
+          - { get_attribute: [ security_group, aws_resource_id ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: public_subnet
+    - type: cloudify.relationships.depends_on
+      target: security_group
+    - type: cloudify.relationships.contained_in
+      target: aws
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        configure:
+          inputs:
+            resource_config: { get_property: [ SELF, resource_config, kwargs] }
 
   mongos_ip:
-    type: cloudify.aws.nodes.ElasticIP
+    type: cloudify.nodes.aws.ec2.ElasticIP
     properties:
-      aws_config: *aws_config
-      domain: vpc
-
-  mongo_config_ip:
-    type: cloudify.aws.nodes.ElasticIP
-    properties:
-      aws_config: *aws_config
-      domain: vpc
-
-  subnet:
-    type: cloudify.aws.nodes.Subnet
-    properties:
-      aws_config: *aws_config
-      use_external_resource: true
-      resource_id: { get_input: public_subnet_id }
-      cidr_block: N/A
-      availability_zone: N/A
+      resource_config:
+        kwargs:
+          Domain: 'vpc'
+      client_config: *client_config
     relationships:
-      - type: cloudify.aws.relationships.subnet_contained_in_vpc
-        target: vpc
+    - type: cloudify.relationships.depends_on
+      target: mongos_nic
+    - type: cloudify.relationships.contained_in
+      target: aws
+
+  mongos_nic:
+    type: cloudify.nodes.aws.ec2.Interface
+    properties:
+      client_config: *client_config
+      resource_config:
+        kwargs:
+          Description: Created by mongodb-blueprint aws.yaml.
+          SubnetId: { get_attribute: [ public_subnet, aws_resource_id] }
+          Groups:
+          - { get_attribute: [ security_group, aws_resource_id ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: public_subnet
+    - type: cloudify.relationships.depends_on
+      target: security_group
+    - type: cloudify.relationships.contained_in
+      target: aws
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        configure:
+          inputs:
+            resource_config: { get_property: [ SELF, resource_config, kwargs] }
+
+  mongo_ip:
+    type: cloudify.nodes.aws.ec2.ElasticIP
+    properties:
+      resource_config:
+        kwargs:
+          Domain: 'vpc'
+      client_config: *client_config
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: mongo_nic
+    - type: cloudify.relationships.contained_in
+      target: aws
+
+  mongo_nic:
+    type: cloudify.nodes.aws.ec2.Interface
+    properties:
+      client_config: *client_config
+      resource_config:
+        kwargs:
+          Description: Created by mongodb-blueprint aws.yaml.
+          SubnetId: { get_attribute: [ public_subnet, aws_resource_id] }
+          Groups:
+          - { get_attribute: [ security_group, aws_resource_id ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: public_subnet
+    - type: cloudify.relationships.depends_on
+      target: security_group
+    - type: cloudify.relationships.contained_in
+      target: aws
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        configure:
+          inputs:
+            resource_config: { get_property: [ SELF, resource_config, kwargs] }
+
+  security_group_rules:
+    type: cloudify.nodes.aws.ec2.SecurityGroupRuleIngress
+    properties:
+      client_config: *client_config
+      resource_config:
+        kwargs:
+          IpPermissions:
+          - IpProtocol: tcp
+            FromPort: { get_property: [mongod, port] }
+            ToPort: { get_property: [mongod, port] }
+            IpRanges:
+            - CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: { get_property: [mongos, port] }
+            ToPort: { get_property: [mongos, port] }
+            IpRanges:
+            - CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: { get_property: [mongo_config, port] }
+            ToPort: { get_property: [mongo_config, port] }
+            IpRanges:
+            - CidrIp: 0.0.0.0/0
+    relationships:
+    - type: cloudify.relationships.contained_in
+      target: security_group
+
+  security_group:
+    type: cloudify.nodes.aws.ec2.SecurityGroup
+    properties:
+      resource_config:
+        kwargs:
+          GroupName: MongoDBExampleSecurityGroup
+          Description: Created by haproxy-blueprint aws-blueprint.yaml.
+          VpcId: { get_attribute: [ vpc, aws_resource_id] }
+      client_config: *client_config
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: vpc
+    - type: cloudify.relationships.contained_in
+      target: aws
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        configure:
+          inputs:
+            resource_config: { get_property: [ SELF, resource_config, kwargs] }
+
+  public_subnet:
+    type: cloudify.nodes.aws.ec2.Subnet
+    properties:
+      client_config: *client_config
+      use_external_resource: true
+      resource_config:
+        kwargs:
+          CidrBlock: 'N/A'
+          AvailabilityZone: 'N/A'
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            aws_resource_id: { get_attribute: [ aws, deployment, outputs, public_subnet_id ] }
+    relationships:
+    - type: cloudify.relationships.depends_on
+      target: vpc
+    - type: cloudify.relationships.contained_in
+      target: aws
 
   vpc:
-    type: cloudify.aws.nodes.VPC
+    type: cloudify.nodes.aws.ec2.Vpc
     properties:
-      aws_config: *aws_config
+      client_config: *client_config
       use_external_resource: true
-      resource_id: { get_input: vpc_id }
-      cidr_block: N/A
+      # resource_id: { get_attribute: [ aws, deployment, outputs, vpc_id ] }
+      resource_config:
+        kwargs:
+          CidrBlock: 'N/A'
+    interfaces:
+      cloudify.interfaces.lifecycle:
+        create:
+          inputs:
+            aws_resource_id: { get_attribute: [ aws, deployment, outputs, vpc_id ] }
     relationships:
-      - type: cloudify.relationships.depends_on
-        target: cloudify_host_cloud_config
+    - type: cloudify.relationships.contained_in
+      target: aws
+
+  aws:
+    type: cloudify.nodes.DeploymentProxy
+    properties:
+      resource_config:
+        blueprint:
+          id: { get_input: network_deployment_name }
+          blueprint_archive: https://github.com/cloudify-examples/aws-example-network/archive/master.zip
+          main_file_name: simple-blueprint.yaml
+          external_resource: external
+        deployment:
+          id: { get_input: network_deployment_name }
+          outputs:
+            vpc_id: vpc_id
+            public_subnet_id: public_subnet_id
+            ec2_region_name: ec2_region_name
+            ec2_region_endpoint: ec2_region_endpoint
+            availability_zone: availability_zone
+          external_resource: external
+        reexecute: false
 
   cloudify_host_cloud_config:
     type: cloudify.nodes.CloudInit.CloudConfig
     properties:
       resource_config:
         users:
-          - name: { get_input: agent_user }
-            shell: /bin/bash
-            sudo: ['ALL=(ALL) NOPASSWD:ALL']
-            ssh-authorized-keys:
-              - { get_input: agent_key_public }
+        - name: { get_input: agent_user }
+          shell: /bin/bash
+          sudo: ['ALL=(ALL) NOPASSWD:ALL']
+          ssh-authorized-keys:
+          - { get_input: agent_key_public }
